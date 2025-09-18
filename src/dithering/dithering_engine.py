@@ -196,8 +196,3 @@ class DitheringEngine:
     ])
 
     return result / (n * n)
-
-    
-
-
-

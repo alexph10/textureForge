@@ -181,7 +181,7 @@ class DitheringEngine:
         return np.clip(result * 255, 0, 255).astype(np.uint8)
     
     def _rgb_to_grayscale(self, rgb_image: np.ndarray) -> np.ndarray:
-        if len(rgb_image.shape) == 3:
+       if len(rgb_image.shape) == 3:
     return np.dot(rgb_image[..., :3], [0.299, 0.587, 0.114]) / 4.0
     
     smaller = self._generate_bayer_matrix(n // 2)
@@ -191,8 +191,10 @@ class DitheringEngine:
     bottom_right = 4 * smaller + 1 
 
     result = np.vstack([
-        np.hstack([top_left, top_right])
+        np.hstack([top_left, top_right]),
         np.hstack([bottom_left, bottom_right])
     ])
 
     return result / (n * n)
+
+

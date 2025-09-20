@@ -1,3 +1,4 @@
+from ctypes import DllCanUnloadNow
 import numpy as np 
 from PIL import Image 
 import cv2
@@ -178,7 +179,117 @@ class ColorQuantizer:
         return modified_palette.astype(np.uint8)
     
     def enforce_brightness_distribution(self, image: np.ndarray) -> np.ndarray:
+        img_float = image.astype(np.float32) / 255.0 
+        
+        brightness = np.sum(img_float, axis = 2) / 3.0
+        
+        shadow_mask = brightness < (80/255)
+        
+        highlight_mask = brightness > (150/255)
 
+        midtone_mask  = ~(shadow_mask | highlight_mask)
+
+        total_pixels = brightness.size
+
+        current_shadows = np.sum(shadow_mask) / total_pixels
+        current_highlights = np.sum(highlight_mask) / total_pixels
+        current_midtones = np.sum(midtone_mask) / total_pixels
+
+        target_shadows = self.target_distribution['shadows']
+        target_highlights = self.target_distribution['highlights']
+
+        result = img_float.copy()
+
+        if current_shadows < target_shadows:
+            shortage = target_shadows - current_shadows
+            pixels_to_darken = int(shortage * total_pixels)
+            
+            midtone_brightness = brightness.copy()
+            midtone_brightness[~midtone_mask] = -1
+
+            flat_brightness = midtone_brightness.flatten()
+            valid_indices = np.where(flat_brightness > 0)[0]
+            
+            if len(valid_indices) > 0:
+                n_to_select = min(pixels_to_darken, len(valid_indices))
+                brightest_indices = np.argpartition(
+                    flat_brightness[valid_indices], - n_to_select
+                )[-n_to_select:]
+
+                selected_global_indices = valid_indices[brightest_indices]
+                y_coords = selected_global_indices // result.shape[1]
+                x_coords = selected_global_indices %  result.shape[1] 
+
+                for y,x in zip(y_coords, x_coords):
+                    result.[y, x] *= 0.6
+
+        if current_highlights > target_highlights:
+            excess = current_highlights - target_highlights
+            pixels_to_tone = int(excess * total_pixels)
+            
+            highlight_indices = np.where(highlight_mask.flatten())[0]
+
+            if len(highlight_indices) > pixels_to_tone:
+                selected_indices = np.random.choice(
+                    highlight_indices, pixels_to_tone, replace=False
+                )
+
+                y_coords = selected_indices // result.shape[1]
+                x_coords = selected_indices % result.shape[1]
+                
+                for y,x in zip(y_coords, x_coords):
+                    result[y,x] *= 0.8 
+        return (result* 255).astype(np.uint8)
+    
+    def refined_quantization(self, image: np.ndarray, target_colors: int = 4, palette_style: str = "auto", accent_coverage: float = 0.05) -> np.ndarray:
+        distributed = self.enforce_brightness_distribution(image)
+        shadow_enforced = self.ensure_shadow_dominance(distributed, self.shadow_dominance_min)
+
+        if palette_style == "auto":
+            avg_brightness = np.mean(shadow_enforced) / 255.0 
+            palette_style = "palette_1" if avg_brightness < 0.4 else "palette_2"
+        
+        img_float = shadow_enforced.astype(np.float32) / 255.0
+        pixels = img_float.reshape(-1, 3)
+
+        kmeans = KMeans(n_clusters=target_colors, random_state = 42, n_init = 10)
+
+        kmeans.fit(pixels)
+
+        quantized_pixels = kmeans.cluster_centers_[kmeans.labels_]
+        
+        quantized = quantized_pixels.reshape(img_float.shape)
+        
+        quantized_uint8 = (quantized * 255).astype(np.uint8)
+
+        palette = kmeans.cluster_centers_
+
+        accent_idx = self._identify_accent_color(palette)
+        if accent_idx is not None:
+            accent_color = (palette[accent_idx] * 255).astype(int)
+            quantized_uint8 = self.apply_selective_accent_placement(
+                quantized_uint8, tuple(accent_color), accent_coverage)
+
+        return quantized_uint8
+    
+    def _identify_accent_color(self, palette: np.ndarray) -> Optional[int]:
+        
+        if len(palette) < 3:
+            return None
+        saturations = []
+        for color in palette:
+            max_val = np.max(color)
+            min_val = np.min(color)
+            sat = (max_val - min_val) / max(max_val, 0.001)
+            saturations.append(sat)
+
+        saturations = np.array(saturations)
+        
+        if np.max(saturations) > 0.3:
+            return np.argmax(saturations)
+
+        return None
+        
 
 
 
